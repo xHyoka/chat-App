@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Chat App</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.2/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+</head>
+<body>
+<h2>Chat</h2>
+
+<div id="messages"></div>
+
+<input type="text" id="sender" placeholder="Adın" />
+<button onclick="joinChat()">Sohbete Katıl</button>
+<input type="text" id="content" placeholder="Mesaj" disabled />
+<button id="sendButton" onclick="sendMessage()" disabled>Gönder</button>
+<button onclick="changeRoom('general')">General</button>
+<button onclick="changeRoom('java')">Java</button>
+
+
+<h3>Online Kullanıcılar</h3>
+<ul id="onlineUsers"></ul>
+
+<script>
+    var room = "general";
+    var roomSubscription = null;
+    var socket = new SockJS('/ws');
+    var stompClient = Stomp.over(socket);
+    var userSubscription = null;
+    var joined = false;
+    stompClient.connect({}, function(frame) {
+        console.log('Bağlandı: ' + frame);
+        loadMessages(room);
+        subscribeRoom();
+        loadOnlineUsers(room);
+    });
+
+    function subscribeRoom() {
+
+        if (roomSubscription != null) {
+            roomSubscription.unsubscribe();
+        }
+
+        roomSubscription = stompClient.subscribe('/topic/room/' + room, function (message) {
+
+            var msg = JSON.parse(message.body);
+
+            var time = new Date(msg.timestamp);
+
+            var formattedTime =
+                String(time.getHours()).padStart(2, '0') +
+                ':' +
+                String(time.getMinutes()).padStart(2, '0');
+
+            var div = document.getElementById('messages');
+
+            if (msg.type === 'JOIN' || msg.type === 'LEAVE') {
+
+                div.innerHTML +=
+                    '<p><i>' +
+                    msg.content +
+                    '</i> <small>(' +
+                    formattedTime +
+                    ')</small></p>';
+
+            } else {
+
+                div.innerHTML +=
+                    '<p><b>' +
+                    msg.sender +
+                    ':</b> ' +
+                    msg.content +
+                    ' <small>(' +
+                    formattedTime +
+                    ')</small></p>';
+            }
+        });
+
+
+        userSubscription =
+            stompClient.subscribe(
+                '/topic/room/' + room + '/users',
+                function (message) {
+
+                    var users =
+                        JSON.parse(message.body);
+
+                    var list =
+                        document.getElementById('onlineUsers');
+
+                    list.innerHTML = '';
+
+                    users.forEach(function (username) {
+
+                        list.innerHTML +=
+                            '<li>' + username + '</li>';
+                    });
+                });
+    }
+
+    function joinChat() {
+        var sender = document.getElementById('sender').value;
+
+        stompClient.send('/app/chat.addUser', {}, JSON.stringify({
+            sender: sender,
+            room: room,
+            content: sender + " odaya katıldı"
+        }));
+
+        joined = true;
+
+        document.getElementById('sender').disabled = true;
+        document.getElementById('content').disabled = false;
+        document.getElementById('sendButton').disabled = false;    }
+
+    function changeRoom(newRoom) {
+        if (room == newRoom){
+            return;
+        }
+
+        room = newRoom;
+
+        document.getElementById('messages').innerHTML = '';
+        loadMessages(room);
+        subscribeRoom();
+        stompClient.send(
+            '/app/chat.changeRoom',
+            {},
+            JSON.stringify({
+                room: room
+            }));
+
+    }
+
+    function sendMessage() {
+        if (!joined){
+            alert("Önce sohbete katıl");
+            return;
+        }
+        var sender = document.getElementById('sender').value;
+        var content = document.getElementById('content').value;
+
+        if (content.trim() === ''){
+            return;
+        }
+
+        stompClient.send('/app/chat', {}, JSON.stringify({
+            sender: sender,
+            content: content,
+            room: room
+        }));
+
+        document.getElementById('content').value = '';
+
+    }
+
+    function loadOnlineUsers(room) {
+        fetch('/api/online-users/' + room)
+            .then(response => response.json())
+            .then(users => {
+
+                var list = document.getElementById('onlineUsers');
+
+                list.innerHTML = '';
+
+                users.forEach(function(username) {
+                    list.innerHTML += '<li>' + username + '</li>';
+                });
+            });
+    }
+
+    function loadMessages(room) {
+        fetch('/api/messages/' + room)
+            .then(response => response.json())
+            .then(messages => {
+                var div = document.getElementById('messages');
+
+                // Önce ekranı temizle
+                div.innerHTML = '';
+
+                // DB'den gelen eski mesajları ekrana yaz
+                messages.forEach(function(msg) {
+                    var time = new Date(msg.timestamp);
+
+                    var formattedTime =
+                        String(time.getHours()).padStart(2, '0')
+                        + ':'
+                        + String(time.getMinutes()).padStart(2, '0');
+
+                    div.innerHTML +=
+                        '<p>'
+                        + '<b>' + msg.sender + ':</b> '
+                        + msg.content
+                        + ' <small>(' + formattedTime + ')</small>'
+                        + '</p>';
+                });
+            });
+    }
+</script>
+</body>
+</html>
